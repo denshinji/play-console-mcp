@@ -1,0 +1,26 @@
+[project]
+name = "play-console-mcp"
+version = "0.1.0"
+description = "MCP server for Google Play Console: store listings, graphics, releases and reviews, with staged edits and safety guards."
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=2.3,<3",
+    "google-api-python-client>=2.150",
+    "google-auth>=2.35",
+]
+
+[project.scripts]
+play-console-mcp = "play_console_mcp.server:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["play_console_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
