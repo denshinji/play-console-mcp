@@ -117,3 +117,7 @@ uv run pytest -q
 ```
 
 Tests use a mocked Play API and need no credentials.
+
+## License
+
+[MIT](LICENSE)
