@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from conftest import png_bytes
 
@@ -195,7 +197,7 @@ def test_commit_refuses_production_changes_without_opt_in(make_play, service):
     staged = {"tracks": [{"track": "production", "releases": [{"versionCodes": ["41"]}]}]}
     tracks_list = edits_of(service).tracks.return_value.list.return_value.execute
     tracks_list.side_effect = [staged, live]
-    with pytest.raises(PlayConsoleError, match="changes the production track"):
+    with pytest.raises(PlayConsoleError, match="changes production"):
         make_play().commit_edit("edit-9")
     edits_of(service).commit.assert_not_called()
 
@@ -278,3 +280,55 @@ def test_tools_refuse_to_run_without_package_names(tmp_path, service):
     with pytest.raises(PlayConsoleError, match="PLAY_PACKAGE_NAMES is not set"):
         play.list_tracks()
     service.edits.assert_not_called()
+
+
+def test_store_dir_refuses_listing_symlink_outside_root(make_play, tmp_path):
+    root = tmp_path / "repo"
+    store = root / "docs/store/play"
+    store.mkdir(parents=True)
+    secret = tmp_path / "notes.md"
+    secret.write_text("## App name\nSECRET\n", encoding="utf-8")
+    (store / "listing-en-US.md").symlink_to(secret)
+    with pytest.raises(PlayConsoleError, match="outside the asset root"):
+        make_play(root).stage_store_dir()
+
+
+def test_store_dir_follows_listing_symlink_inside_root(make_play, store_root):
+    store = store_root / "docs/store/play"
+    (store_root / "copy").mkdir()
+    (store_root / "copy/en.md").write_text("## App name\nExample\n", encoding="utf-8")
+    (store / "listing-en-US.md").symlink_to(store_root / "copy/en.md")
+    plan = make_play(store_root).stage_store_dir()
+    assert {l["language"]: l["fields"]["title"] for l in plan["listings"]} == {
+        "en-US": "Example",
+        "id": "Contoh",
+    }
+
+
+@pytest.mark.parametrize("root", [Path.home(), Path("/")])
+def test_refuses_home_directory_or_above_as_asset_root(make_play, root):
+    with pytest.raises(PlayConsoleError, match="too broad"):
+        make_play(root).stage_store_dir()
+    with pytest.raises(PlayConsoleError, match="too broad"):
+        make_play(root).upload_images("id", "icon", ["icon.png"])
+
+
+def test_form_factor_production_tracks_are_locked(make_play, service):
+    with pytest.raises(PlayConsoleError, match="Production changes are disabled"):
+        make_play().set_track_release("wear:production", [42], status="completed")
+    edits_of(service).insert.assert_not_called()
+
+
+def test_commit_refuses_form_factor_production_changes(make_play, service):
+    live = {"tracks": [{"track": "production", "releases": []}]}
+    staged = {
+        "tracks": [
+            {"track": "production", "releases": []},
+            {"track": "wear:production", "releases": [{"versionCodes": ["41"]}]},
+        ]
+    }
+    tracks_list = edits_of(service).tracks.return_value.list.return_value.execute
+    tracks_list.side_effect = [staged, live]
+    with pytest.raises(PlayConsoleError, match="changes wear:production"):
+        make_play().commit_edit("edit-9")
+    edits_of(service).commit.assert_not_called()

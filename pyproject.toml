@@ -1,14 +1,14 @@
 [project]
 name = "play-console-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "MCP server for Google Play Console: store listings, graphics, releases and reviews, with staged edits and safety guards."
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "mcp>=2.3,<3",
-    "google-api-python-client>=2.150",
-    "google-auth>=2.35",
+    "google-api-python-client>=2.150,<3",
+    "google-auth>=2.35,<3",
 ]
 
 [project.scripts]

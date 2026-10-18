@@ -616,7 +616,7 @@ wheels = [
 
 [[package]]
 name = "play-console-mcp"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "google-api-python-client" },
@@ -631,8 +631,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "google-api-python-client", specifier = ">=2.150" },
-    { name = "google-auth", specifier = ">=2.35" },
+    { name = "google-api-python-client", specifier = ">=2.150,<3" },
+    { name = "google-auth", specifier = ">=2.35,<3" },
     { name = "mcp", specifier = ">=2.3,<3" },
 ]
 

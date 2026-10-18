@@ -100,25 +100,44 @@ class PlayConsole:
             )
         return package_name
 
+    def asset_root(self) -> Path:
+        """The upload boundary, refused when it would expose a whole home directory."""
+        root = self.settings.asset_root
+        home = Path.home().resolve()
+        # The root itself, the home directory, or any directory above it
+        # (/, /Users) would make every photo on the machine uploadable.
+        if root == home or home.is_relative_to(root):
+            raise PlayConsoleError(
+                f"Asset root {root} is too broad. Start the server from the app "
+                "repository or set PLAY_ASSET_ROOT to it."
+            )
+        if not root.is_dir():
+            raise PlayConsoleError(f"Asset root {root} is not a directory")
+        return root
+
     def asset_path(self, path: str, suffixes: tuple[str, ...]) -> Path:
+        root = self.asset_root()
         candidate = Path(path).expanduser()
         if not candidate.is_absolute():
-            candidate = self.settings.asset_root / candidate
+            candidate = root / candidate
         resolved = candidate.resolve()
-        if not resolved.is_relative_to(self.settings.asset_root):
-            raise PlayConsoleError(
-                f"{path} is outside the asset root {self.settings.asset_root}"
-            )
+        if not resolved.is_relative_to(root):
+            raise PlayConsoleError(f"{path} is outside the asset root {root}")
         if not resolved.is_file():
             raise PlayConsoleError(f"{path} is not a file")
         if resolved.suffix.lower() not in suffixes:
             raise PlayConsoleError(f"{path} must end with {' or '.join(suffixes)}")
         return resolved
 
+    @staticmethod
+    def is_production(track: str) -> bool:
+        # Form factors have their own production tracks, e.g. "wear:production".
+        return track == "production" or track.endswith(":production")
+
     def _check_track(self, track: str) -> None:
         if not track:
             raise PlayConsoleError("track is required")
-        if track == "production" and not self.settings.allow_production:
+        if self.is_production(track) and not self.settings.allow_production:
             raise PlayConsoleError(
                 "Production changes are disabled. Promote from a testing track in Play "
                 "Console, or restart the server with PLAY_ALLOW_PRODUCTION=1."
@@ -331,17 +350,21 @@ class PlayConsole:
     # -- docs/store/play sync -----------------------------------------------
 
     def plan_store_dir(self, store_dir: str, image_language: str | None) -> dict:
-        root = self.settings.asset_root
+        root = self.asset_root()
         directory = (root / store_dir).resolve()
         if not directory.is_relative_to(root) or not directory.is_dir():
             raise PlayConsoleError(f"{store_dir} is not a directory under {root}")
 
         listings = []
         for path in sorted(directory.glob("listing-*.md")):
+            # The language comes from the link's own name; the text is read
+            # only after the target is checked, so a symlink can't pull in a
+            # file from outside the asset root.
             language = listing_md.language_of(path)
             if not language:
                 continue
-            fields = listing_md.parse_listing(path.read_text(encoding="utf-8"))
+            source = self.asset_path(str(path), (".md",))
+            fields = listing_md.parse_listing(source.read_text(encoding="utf-8"))
             if errors := listing_md.length_errors(fields):
                 raise PlayConsoleError(f"{path.name}: " + "; ".join(errors))
             listings.append(
@@ -574,12 +597,16 @@ class PlayConsole:
         package = self.package(package_name)
         if not self.settings.allow_production:
             # An edit holds the whole app state, so compare its production
-            # track with the live one rather than looking for any release.
-            staged = self._production_track(package, edit_id)
-            live = self._production_track(package, None)
-            if staged != live:
+            # tracks with the live ones rather than looking for any release.
+            # The edit id may come from elsewhere, so every form factor counts.
+            staged = self._production_tracks(package, edit_id)
+            live = self._production_tracks(package, None)
+            changed = sorted(
+                name for name in staged.keys() | live.keys() if staged.get(name) != live.get(name)
+            )
+            if changed:
                 raise PlayConsoleError(
-                    "This edit changes the production track. Commit it in Play Console, "
+                    f"This edit changes {', '.join(changed)}. Commit it in Play Console, "
                     "or restart the server with PLAY_ALLOW_PRODUCTION=1."
                 )
         result = self._run(
@@ -598,9 +625,13 @@ class PlayConsole:
             else "Changes are saved but not sent for review; send them from Play Console.",
         }
 
-    def _production_track(self, package: str, edit_id: str | None) -> list:
+    def _production_tracks(self, package: str, edit_id: str | None) -> dict[str, list]:
         tracks = self.list_tracks(package, edit_id)["tracks"]
-        return next((t.get("releases", []) for t in tracks if t.get("track") == "production"), [])
+        return {
+            t["track"]: t.get("releases", [])
+            for t in tracks
+            if self.is_production(t.get("track", ""))
+        }
 
     def delete_edit(self, edit_id: str, package_name: str | None = None) -> dict:
         package = self.package(package_name)
