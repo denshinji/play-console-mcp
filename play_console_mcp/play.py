@@ -4,6 +4,11 @@ Listing, graphics and release changes go through a Play "edit": the write
 methods stage changes in an edit and return its id, and nothing is live until
 commit_edit is called on that id. Reads open a throwaway edit and delete it,
 unless an edit id is passed to look at staged changes.
+
+Google Play keeps one open edit per app: inserting a new edit deletes the one
+already open. So while an edit this server staged is still open, anything that
+would insert another (a read without edit_id, a write without edit_id) is
+refused with the edit's id instead of silently discarding the staged changes.
 """
 
 from __future__ import annotations
@@ -43,6 +48,12 @@ class PlayConsole:
         self.settings = settings
         self._service_factory = service_factory or self._build_service
         self._service: Any = None
+        # Per package: the edit this server staged and has not committed or
+        # deleted yet.
+        self._open_edits: dict[str, str] = {}
+        # Per edit id: its production tracks when it was created, which are
+        # the live ones at that moment (an edit starts as a copy of the app).
+        self._baselines: dict[str, dict[str, list]] = {}
 
     # -- plumbing -----------------------------------------------------------
 
@@ -143,11 +154,38 @@ class PlayConsole:
                 "Console, or restart the server with PLAY_ALLOW_PRODUCTION=1."
             )
 
+    def _forget_edit(self, package: str, edit_id: str) -> None:
+        if self._open_edits.get(package) == edit_id:
+            del self._open_edits[package]
+        self._baselines.pop(edit_id, None)
+
+    def _refuse_if_edit_open(self, package: str, action: str) -> None:
+        """Refuses [action] when it would open an edit over one still staged.
+
+        An edit that no longer exists on Play (committed or discarded
+        elsewhere, or expired) is forgotten instead.
+        """
+        open_id = self._open_edits.get(package)
+        if open_id is None:
+            return
+        try:
+            self._run(self.edits.get(packageName=package, editId=open_id))
+        except PlayConsoleError:
+            self._forget_edit(package, open_id)
+            return
+        raise PlayConsoleError(
+            f"Edit {open_id} is still open with staged changes, and {action} would open "
+            "a new edit, which makes Google Play discard it. Pass "
+            f"edit_id={open_id} to use the staged edit, or commit_edit or delete_edit "
+            "it first."
+        )
+
     @contextmanager
     def _read_edit(self, package: str, edit_id: str | None) -> Iterator[str]:
         if edit_id:
             yield edit_id
             return
+        self._refuse_if_edit_open(package, "reading the live state")
         temp_id = self._run(self.edits.insert(packageName=package, body={}))["id"]
         try:
             yield temp_id
@@ -160,7 +198,23 @@ class PlayConsole:
     def _write_edit(self, package: str, edit_id: str | None) -> str:
         if edit_id:
             return edit_id
-        return self._run(self.edits.insert(packageName=package, body={}))["id"]
+        self._refuse_if_edit_open(package, "staging into a new edit")
+        new_id = self._run(self.edits.insert(packageName=package, body={}))["id"]
+        self._open_edits[package] = new_id
+        if not self.settings.allow_production:
+            # Snapshot now: commit_edit compares against it, because reading
+            # the live tracks at commit time would open an edit and discard
+            # this one.
+            try:
+                self._baselines[new_id] = self._production_tracks(package, new_id)
+            except PlayConsoleError:
+                self._forget_edit(package, new_id)
+                try:
+                    self._run(self.edits.delete(packageName=package, editId=new_id))
+                except PlayConsoleError:
+                    pass  # An abandoned edit expires on its own.
+                raise
+        return new_id
 
     # -- app and listings ---------------------------------------------------
 
@@ -598,9 +652,18 @@ class PlayConsole:
         if not self.settings.allow_production:
             # An edit holds the whole app state, so compare its production
             # tracks with the live ones rather than looking for any release.
-            # The edit id may come from elsewhere, so every form factor counts.
+            # Every form factor counts. "Live" is the snapshot taken when this
+            # server created the edit: reading the live tracks now would open
+            # another edit and make Play discard this one.
+            live = self._baselines.get(edit_id)
+            if live is None:
+                raise PlayConsoleError(
+                    f"Edit {edit_id} was not staged by this server since it started, so "
+                    "its production tracks cannot be checked against the live ones "
+                    "without discarding it. Stage the change again here, commit it in "
+                    "Play Console, or restart the server with PLAY_ALLOW_PRODUCTION=1."
+                )
             staged = self._production_tracks(package, edit_id)
-            live = self._production_tracks(package, None)
             changed = sorted(
                 name for name in staged.keys() | live.keys() if staged.get(name) != live.get(name)
             )
@@ -609,13 +672,19 @@ class PlayConsole:
                     f"This edit changes {', '.join(changed)}. Commit it in Play Console, "
                     "or restart the server with PLAY_ALLOW_PRODUCTION=1."
                 )
-        result = self._run(
-            self.edits.commit(
-                packageName=package,
-                editId=edit_id,
-                changesNotSentForReview=not send_for_review,
+        try:
+            result = self._run(
+                self.edits.commit(
+                    packageName=package,
+                    editId=edit_id,
+                    changesNotSentForReview=not send_for_review,
+                )
             )
-        )
+        except PlayConsoleError as error:
+            if "deleted" in str(error).lower():
+                self._forget_edit(package, edit_id)
+            raise
+        self._forget_edit(package, edit_id)
         return {
             "committed": True,
             "edit": result,
@@ -635,7 +704,11 @@ class PlayConsole:
 
     def delete_edit(self, edit_id: str, package_name: str | None = None) -> dict:
         package = self.package(package_name)
-        self._run(self.edits.delete(packageName=package, editId=edit_id))
+        try:
+            self._run(self.edits.delete(packageName=package, editId=edit_id))
+        finally:
+            # Gone either way: deleted now, or already deleted on Play.
+            self._forget_edit(package, edit_id)
         return {"deleted": True, "editId": edit_id}
 
     # -- reviews ------------------------------------------------------------

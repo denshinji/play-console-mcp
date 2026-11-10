@@ -185,10 +185,19 @@ def test_upload_bundle_rejects_other_files(make_play, tmp_path):
         make_play().upload_bundle("app.apk")
 
 
+def http_error(status: int, message: str):
+    from googleapiclient.errors import HttpError
+
+    response = type("Resp", (), {"status": status, "reason": "Bad Request"})()
+    return HttpError(response, ('{"error": {"message": "%s"}}' % message).encode())
+
+
 def test_commit_maps_send_for_review(make_play, service):
-    make_play().commit_edit("edit-9", send_for_review=False)
+    play = make_play()
+    eid = play.update_listing("id", title="Contoh")["editId"]
+    play.commit_edit(eid, send_for_review=False)
     edits_of(service).commit.assert_called_once_with(
-        packageName="com.example.app", editId="edit-9", changesNotSentForReview=True
+        packageName="com.example.app", editId="edit-1", changesNotSentForReview=True
     )
 
 
@@ -196,16 +205,109 @@ def test_commit_refuses_production_changes_without_opt_in(make_play, service):
     live = {"tracks": [{"track": "production", "releases": [{"versionCodes": ["40"]}]}]}
     staged = {"tracks": [{"track": "production", "releases": [{"versionCodes": ["41"]}]}]}
     tracks_list = edits_of(service).tracks.return_value.list.return_value.execute
-    tracks_list.side_effect = [staged, live]
+    # The snapshot when the edit is created, then the edit at commit time.
+    tracks_list.side_effect = [live, staged]
+    play = make_play()
+    eid = play.update_listing("id", title="Contoh")["editId"]
     with pytest.raises(PlayConsoleError, match="changes production"):
-        make_play().commit_edit("edit-9")
+        play.commit_edit(eid)
     edits_of(service).commit.assert_not_called()
 
 
 def test_commit_allows_edits_with_unchanged_production(make_play, service):
     same = {"tracks": [{"track": "production", "releases": [{"status": "inProgress"}]}]}
     edits_of(service).tracks.return_value.list.return_value.execute.return_value = same
-    assert make_play().commit_edit("edit-9")["committed"] is True
+    play = make_play()
+    eid = play.update_listing("id", title="Contoh")["editId"]
+    assert play.commit_edit(eid)["committed"] is True
+
+
+# Google Play keeps one open edit per app: inserting a new edit deletes the open
+# one. These guard against the server discarding an edit it just staged.
+
+
+def test_commit_never_opens_a_second_edit(make_play, service):
+    play = make_play()
+    eid = play.update_listing("id", full_description="Baru")["editId"]
+    play.commit_edit(eid)
+    edits = edits_of(service)
+    edits.insert.assert_called_once()  # only the staged edit itself
+    edits.delete.assert_not_called()
+    edits.commit.assert_called_once()
+
+
+def test_staged_edit_blocks_reads_that_would_discard_it(make_play, service):
+    play = make_play()
+    play.update_listing("id", title="Contoh")
+    with pytest.raises(PlayConsoleError, match="Edit edit-1 is still open"):
+        play.app_details()
+    edits = edits_of(service)
+    edits.insert.assert_called_once()
+    edits.delete.assert_not_called()
+    # Reading the staged state is fine.
+    play.list_listings(edit_id="edit-1")
+
+
+def test_staged_edit_blocks_a_new_write_but_accepts_its_id(make_play, service):
+    play = make_play()
+    play.update_listing("id", title="Contoh")
+    with pytest.raises(PlayConsoleError, match="pass edit_id=edit-1|Pass edit_id=edit-1"):
+        play.update_listing("id", short_description="Pendek")
+    play.update_listing("id", short_description="Pendek", edit_id="edit-1")
+    edits_of(service).insert.assert_called_once()
+    assert edits_of(service).listings.return_value.patch.call_count == 2
+
+
+def test_reads_work_again_after_commit_or_delete(make_play, service):
+    play = make_play()
+    play.commit_edit(play.update_listing("id", title="A")["editId"])
+    play.app_details()
+    play.delete_edit(play.update_listing("id", title="B")["editId"])
+    play.app_details()
+    assert edits_of(service).insert.call_count == 4  # two staged, two throwaway reads
+
+
+def test_an_edit_gone_from_play_is_forgotten(make_play, service):
+    play = make_play()
+    play.update_listing("id", title="Contoh")
+    edits_of(service).get.return_value.execute.side_effect = http_error(
+        400, "This Edit has been deleted."
+    )
+    play.app_details()  # no refusal: there is nothing left to protect
+    assert edits_of(service).insert.call_count == 2
+
+
+def test_commit_of_a_deleted_edit_forgets_it(make_play, service):
+    play = make_play()
+    eid = play.update_listing("id", title="Contoh")["editId"]
+    edits_of(service).commit.return_value.execute.side_effect = http_error(
+        400, "This Edit has been deleted."
+    )
+    with pytest.raises(PlayConsoleError, match="deleted"):
+        play.commit_edit(eid)
+    edits_of(service).get.return_value.execute.side_effect = http_error(400, "gone")
+    play.update_listing("id", title="Lagi")  # a fresh edit, not a refusal
+
+
+def test_commit_refuses_an_edit_staged_elsewhere_without_opt_in(make_play, service):
+    with pytest.raises(PlayConsoleError, match="was not staged by this server"):
+        make_play().commit_edit("edit-9")
+    edits_of(service).insert.assert_not_called()
+    edits_of(service).commit.assert_not_called()
+
+    make_play(allow_production=True).commit_edit("edit-9")
+    edits_of(service).commit.assert_called_once()
+
+
+def test_failed_snapshot_discards_the_new_edit(make_play, service):
+    edits_of(service).tracks.return_value.list.return_value.execute.side_effect = http_error(
+        500, "Backend error"
+    )
+    play = make_play()
+    with pytest.raises(PlayConsoleError, match="Backend error"):
+        play.update_listing("id", title="Contoh")
+    edits_of(service).delete.assert_called_once_with(packageName="com.example.app", editId="edit-1")
+    edits_of(service).listings.return_value.patch.assert_not_called()
 
 
 def test_reviews_are_flattened_and_marked_untrusted(make_play, service):
@@ -328,7 +430,9 @@ def test_commit_refuses_form_factor_production_changes(make_play, service):
         ]
     }
     tracks_list = edits_of(service).tracks.return_value.list.return_value.execute
-    tracks_list.side_effect = [staged, live]
+    tracks_list.side_effect = [live, staged]
+    play = make_play()
+    eid = play.update_listing("id", title="Contoh")["editId"]
     with pytest.raises(PlayConsoleError, match="changes wear:production"):
-        make_play().commit_edit("edit-9")
+        play.commit_edit(eid)
     edits_of(service).commit.assert_not_called()

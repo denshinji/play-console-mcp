@@ -5,6 +5,7 @@ An MCP server for the Google Play Console: store listings, icon, feature graphic
 It is built to be safe to hand to an AI agent:
 
 - **Changes are staged, never published implicitly.** Write tools put their changes in a Play *edit* and return its `editId`. Nothing goes live until `commit_edit` is called, so the agent can show you `edit_summary` first and wait for your approval.
+- **A staged edit is never discarded by accident.** Google Play keeps one open edit per app, and opening another deletes it. While an edit the server staged is open, a read or write without `edit_id` is refused with that edit's id instead. `commit_edit` checks production tracks against a snapshot taken when the edit was created, so it never opens a second edit.
 - **Production is locked.** Staging or committing a change to the `production` track, or to a form-factor production track such as `wear:production`, is refused unless the server runs with `PLAY_ALLOW_PRODUCTION=1`.
 - **Package allowlist.** The server only touches the packages in `PLAY_PACKAGE_NAMES`.
 - **Files stay inside the asset root.** Graphics, bundles and listing files must resolve to files under `PLAY_ASSET_ROOT` (symlinks are followed before the check), so a prompt cannot make it read or upload an arbitrary file from your machine. The server refuses an asset root that is your home directory or above it. Images are checked against Play's size rules before anything is sent.
