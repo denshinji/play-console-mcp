@@ -1,6 +1,6 @@
 [project]
 name = "play-console-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "MCP server for Google Play Console: store listings, graphics, releases and reviews, with staged edits and safety guards."
 readme = "README.md"
 license = "MIT"

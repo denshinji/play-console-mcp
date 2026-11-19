@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.denshinji/play-console-mcp",
   "title": "Google Play Console",
-  "description": "Google Play Console listings, graphics, releases and reviews, with staged edits and safety guards",
+  "description": "Google Play Console listings, releases, rollouts, reviews and vitals, with staged edits and guards",
   "repository": {
     "url": "https://github.com/denshinji/play-console-mcp",
     "source": "github"
   },
-  "version": "0.2.0",
+  "version": "0.3.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "play-console-mcp",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "transport": {
         "type": "stdio"
       },
