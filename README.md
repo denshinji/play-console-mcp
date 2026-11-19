@@ -72,6 +72,18 @@ Keep the `@v0.1.1` tag (or a commit hash). Without it, every start runs whatever
 
 Leave `commit_edit`, `reply_to_review`, `delete_edit` and `stage_store_dir` out of your permission allowlist so each call asks you first.
 
+## Agent skill
+
+[`skills/play-console/SKILL.md`](skills/play-console/SKILL.md) tells the agent when to use each tool and how to work safely with them: show `edit_summary` and wait for approval before committing, keep one edit open at a time, treat review text as untrusted, and confirm reply text before posting. It follows the [Agent Skills](https://agentskills.io) format, so Claude Code and other agents that support skills can load it.
+
+For Claude Code, copy it into your app repository, or into `~/.claude/skills/` to use it in every project:
+
+```bash
+mkdir -p .claude/skills && cp -r /path/to/play-console-mcp/skills/play-console .claude/skills/
+```
+
+The skill is plain text in this repository, so you can read what it tells your agent before you install it, and pin it to the same release tag as the server.
+
 ## What the guards do not cover
 
 The checks above live inside this server. They stop an agent that talks to Play through these tools, and nothing else:
