@@ -107,9 +107,11 @@ def test_stage_store_dir_dry_run_reads_store_folder(make_play, service, store_ro
     assert [l["language"] for l in result["listings"]] == ["id"]
     assert result["listings"][0]["fields"]["title"] == "Contoh"
     assert result["imageLanguage"] == "id"
-    assert len(result["graphics"]["icon"]) == 1
-    assert len(result["graphics"]["featureGraphic"]) == 1
-    assert [s["file"] for s in result["graphics"]["phoneScreenshots"]][:2] == [
+    assert list(result["graphics"]) == ["id"]
+    graphics = result["graphics"]["id"]
+    assert len(graphics["icon"]) == 1
+    assert len(graphics["featureGraphic"]) == 1
+    assert [s["file"] for s in graphics["phoneScreenshots"]][:2] == [
         "01-home.png",
         "02-shelf.png",
     ]
@@ -123,7 +125,7 @@ def test_stage_store_dir_stages_everything_in_one_edit(make_play, service, store
     edits.listings.return_value.patch.assert_called_once()
     assert edits.images.return_value.deleteall.call_count == 3
     assert edits.images.return_value.upload.call_count == 2 + len(
-        result["graphics"]["phoneScreenshots"]
+        result["graphics"]["id"]["phoneScreenshots"]
     )
     edits.commit.assert_not_called()
     assert result["editId"] == "edit-1"

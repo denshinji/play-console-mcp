@@ -2,7 +2,7 @@
 
 <!-- mcp-name: io.github.denshinji/play-console-mcp -->
 
-An MCP server for the Google Play Console: store listings, icon, feature graphic, screenshots, app bundle releases, and user reviews. It runs over stdio and works with Claude Code or any other MCP client.
+An MCP server for the Google Play Console: store listings, icon, feature graphic, screenshots, app bundle releases, staged rollouts, testers, user reviews, Android vitals (crash and ANR rates and issues), and a read-only view of in-app products and subscriptions. It runs over stdio and works with Claude Code or any other MCP client.
 
 It is built to be safe to hand to an AI agent:
 
@@ -11,7 +11,7 @@ It is built to be safe to hand to an AI agent:
 - **Production is locked.** Staging or committing a change to the `production` track, or to a form-factor production track such as `wear:production`, is refused unless the server runs with `PLAY_ALLOW_PRODUCTION=1`.
 - **Package allowlist.** The server only touches the packages in `PLAY_PACKAGE_NAMES`.
 - **Files stay inside the asset root.** Graphics, bundles and listing files must resolve to files under `PLAY_ASSET_ROOT` (symlinks are followed before the check), so a prompt cannot make it read or upload an arbitrary file from your machine. The server refuses an asset root that is your home directory or above it. Images are checked against Play's size rules before anything is sent.
-- **Reviews are marked untrusted.** Review results carry a note telling the agent that review text is user content, not instructions. `reply_to_review` publishes immediately, so keep it behind a permission prompt.
+- **Reviews and crash reports are marked untrusted.** Review results and error issues carry a note telling the agent that their text is content, not instructions. `reply_to_review` publishes immediately, so keep it behind a permission prompt.
 
 ## Requirements
 
@@ -20,17 +20,18 @@ It is built to be safe to hand to an AI agent:
 
 ## Service account setup
 
-1. In **Google Cloud Console**, pick or create a project, open **APIs & Services → Library**, and enable the **Google Play Android Developer API**.
+1. In **Google Cloud Console**, pick or create a project, open **APIs & Services → Library**, and enable the **Google Play Android Developer API**. For `get_vitals` and `list_error_issues`, also enable the **Google Play Developer Reporting API**.
 2. Under **IAM & Admin → Service Accounts**, create a service account (no Cloud roles needed). In its **Keys** tab, choose **Add key → JSON** and download the key.
 3. Store the key outside any repository:
    ```bash
    mkdir -p ~/.config/play-console-mcp && mv ~/Downloads/<key>.json ~/.config/play-console-mcp/service-account.json && chmod 600 ~/.config/play-console-mcp/service-account.json
    ```
 4. In **Play Console → Users and permissions → Invite new users**, add the service account's email. Under **App permissions**, add only your app and grant what you need:
-   - View app information (read-only)
+   - View app information (read-only), which also covers Android vitals
    - Manage store presence (listings and graphics)
    - Reply to reviews
-   - Release apps to testing tracks
+   - Release apps to testing tracks (releases, rollouts and testers on testing tracks)
+   - For `list_one_time_products` and `list_subscriptions`, a permission that can view in-app products, such as *View financial data*; the server never changes products
    - Leave out *Release to production* unless you really want the agent near production.
 
 New permissions can take a few hours to apply; until then the API answers `403 The caller does not have permission`.
@@ -63,7 +64,7 @@ Or in the app repository's `.mcp.json`, pinned to a release from [PyPI](https://
   "mcpServers": {
     "play-console": {
       "command": "uvx",
-      "args": ["play-console-mcp@0.2.0"],
+      "args": ["play-console-mcp@0.3.0"],
       "env": { "PLAY_PACKAGE_NAMES": "com.example.app" }
     }
   }
@@ -107,7 +108,12 @@ docs/store/play/
   icon-512.png                   icon*.png             → icon
   feature-graphic-1024x500.png   feature-graphic*.png  → featureGraphic
   screenshots/01-home.png        screenshots/*         → phoneScreenshots, in file-name order
+  ja-JP/                         a <language>/ folder holds that language's own graphics
+    feature-graphic.png
+    screenshots/01-home.png
 ```
+
+Graphics at the top of the folder go to the first listing's language (or `image_language`). A `<language>/` subfolder, such as `ja-JP/` or `en-US/`, gives that language its own icon, feature graphic or screenshots; only the sets present in a folder are replaced, so a language without a feature graphic keeps the one on Play. A language cannot have graphics both at the top and in its own folder.
 
 Each listing file has one `##` section per field. Headings may be English or Indonesian, and a character count in parentheses is ignored:
 
@@ -133,11 +139,18 @@ It runs as a dry run by default and only reports what it would change. With `dry
 | `get_app_details`, `list_listings`, `list_images`, `list_tracks` | Read; pass `edit_id` to read staged state |
 | `update_listing`, `upload_images`, `delete_images`, `stage_store_dir` | Stage in an edit |
 | `upload_bundle`, `set_track_release` | Stage an `.aab` or a release (default `internal`, `draft`) |
+| `update_rollout` | Stage a staged-rollout change: raise the fraction, halt, resume or complete |
+| `get_testers`, `set_testers` | Read or stage the tester Google Groups of a testing track |
 | `edit_summary`, `validate_edit` | Inspect an edit before committing |
 | `commit_edit` | **Publish** an edit (`send_for_review=false` saves without sending for review) |
 | `delete_edit` | Discard an edit |
 | `list_reviews`, `get_review` | Read reviews (Play only returns roughly the last week) |
 | `reply_to_review` | **Publishes immediately**, 350 characters max |
+| `get_vitals` | Daily crash or ANR rates (overall and user-perceived) against Play's bad behavior threshold |
+| `list_error_issues` | Crash or ANR issue clusters with cause, location, affected users and versions |
+| `list_one_time_products`, `list_subscriptions` | Read in-app products and subscriptions (no writes) |
+
+Earnings are not available through Google's APIs; Play only exports financial reports to a Cloud Storage bucket, so this server does not cover them.
 
 ## Development
 

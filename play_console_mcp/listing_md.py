@@ -27,6 +27,14 @@ _HEADINGS = {
 _FILE_NAME = re.compile(r"^listing-(?P<language>[A-Za-z]{2,3}(?:-[A-Za-z0-9]+)?)\.md$")
 
 
+_LANGUAGE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]+)?$")
+
+
+def is_language(name: str) -> bool:
+    """True for a Play language code used as a folder name, such as en-US or id."""
+    return bool(_LANGUAGE.match(name))
+
+
 def language_of(path: Path) -> str | None:
     match = _FILE_NAME.match(path.name)
     return match["language"] if match else None
