@@ -1,5 +1,7 @@
 # play-console-mcp
 
+<!-- mcp-name: io.github.denshinji/play-console-mcp -->
+
 An MCP server for the Google Play Console: store listings, icon, feature graphic, screenshots, app bundle releases, and user reviews. It runs over stdio and works with Claude Code or any other MCP client.
 
 It is built to be safe to hand to an AI agent:
@@ -54,27 +56,29 @@ claude mcp add play-console --scope local -e PLAY_PACKAGE_NAMES=com.example.app 
 
 `uv run --project` installs the exact dependency versions in `uv.lock`, so this is the most reproducible setup.
 
-Or in the app repository's `.mcp.json`, pinned to a release tag:
+Or in the app repository's `.mcp.json`, pinned to a release from [PyPI](https://pypi.org/project/play-console-mcp/):
 
 ```json
 {
   "mcpServers": {
     "play-console": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/denshinji/play-console-mcp@v0.1.1", "play-console-mcp"],
+      "args": ["play-console-mcp@0.2.0"],
       "env": { "PLAY_PACKAGE_NAMES": "com.example.app" }
     }
   }
 }
 ```
 
-Keep the `@v0.1.1` tag (or a commit hash). Without it, every start runs whatever is on `main`. `uvx` does not read `uv.lock`, so it resolves dependencies within the ranges in `pyproject.toml`; the upper bounds there stop a major release of a dependency from slipping in.
+Keep the version pin. Without it, `uvx` runs whatever release is newest when the server starts. `uvx` does not read `uv.lock`, so it resolves dependencies within the ranges in `pyproject.toml`; the upper bounds there stop a major release of a dependency from slipping in.
+
+The server is also listed in the [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.denshinji/play-console-mcp`.
 
 Leave `commit_edit`, `reply_to_review`, `delete_edit` and `stage_store_dir` out of your permission allowlist so each call asks you first.
 
 ## Agent skill
 
-[`skills/play-console/SKILL.md`](skills/play-console/SKILL.md) tells the agent when to use each tool and how to work safely with them: show `edit_summary` and wait for approval before committing, keep one edit open at a time, treat review text as untrusted, and confirm reply text before posting. It follows the [Agent Skills](https://agentskills.io) format, so Claude Code and other agents that support skills can load it.
+[`skills/play-console/SKILL.md`](https://github.com/denshinji/play-console-mcp/blob/main/skills/play-console/SKILL.md) tells the agent when to use each tool and how to work safely with them: show `edit_summary` and wait for approval before committing, keep one edit open at a time, treat review text as untrusted, and confirm reply text before posting. It follows the [Agent Skills](https://agentskills.io) format, so Claude Code and other agents that support skills can load it.
 
 For Claude Code, copy it into your app repository, or into `~/.claude/skills/` to use it in every project:
 
@@ -145,4 +149,4 @@ Tests use a mocked Play API and need no credentials.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/denshinji/play-console-mcp/blob/main/LICENSE)
